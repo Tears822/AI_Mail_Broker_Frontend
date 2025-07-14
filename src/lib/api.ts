@@ -242,6 +242,14 @@ class ApiClient {
     });
   }
 
+  async updateOrder(orderId: string, updates: { price?: number; amount?: number; expiresAt?: string }): Promise<OrderResponse> {
+    const response = await this.request<{ message: string; order: OrderResponse }>(`/orders/${orderId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+    return response.order;
+  }
+
   async getMarketData(): Promise<MarketDataResponse[]> {
     const response = await this.request<{ marketData: MarketDataResponse[] }>('/market');
     return response.marketData;

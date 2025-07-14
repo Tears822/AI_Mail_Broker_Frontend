@@ -93,11 +93,10 @@ export class WebSocketService {
       window.dispatchEvent(new CustomEvent('marketUpdate', { detail: event.data }));
     });
 
-    // Handle seller approval requests
-    this.socket.on('match:approval', (event: WebSocketEvent) => {
-      console.log('[FRONTEND] Received match:approval event:', event.data);
-      // Dispatch a custom event for React components to listen to
-      window.dispatchEvent(new CustomEvent('sellerApproval', { detail: event.data }));
+    // Handle negotiation turn events
+    this.socket.on('negotiation:your_turn', (event: WebSocketEvent) => {
+      console.log('[FRONTEND] Received negotiation:your_turn event:', event.data);
+      window.dispatchEvent(new CustomEvent('negotiationYourTurn', { detail: event.data }));
     });
   }
 
@@ -145,13 +144,14 @@ export class WebSocketService {
     }
   }
 
-  public emitSellerApprovalResponse(offerId: string, bidId: string, approved: boolean, sellerUserId: string) {
+  public emitNegotiationResponse(asset: string, improved: boolean, newPrice?: number) {
     if (this.socket && this.isConnected) {
-      const payload = { offerId, bidId, approved };
-      console.log('[FRONTEND] Emitting seller approval response:', { eventName: 'match:approval_response', payload });
-      this.socket.emit('match:approval_response', payload);
+      let payload: any = { asset, improved };
+      if (newPrice !== undefined) payload.newPrice = newPrice;
+      console.log('[FRONTEND] Emitting negotiation response:', { eventName: 'negotiation:response', payload });
+      this.socket.emit('negotiation:response', payload);
     } else {
-      console.error('[FRONTEND] Cannot emit seller approval response: socket not connected');
+      console.error('[FRONTEND] Cannot emit negotiation response: socket not connected');
     }
   }
 

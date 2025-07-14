@@ -22,10 +22,17 @@ export default function DashboardPage() {
   const [orderError, setOrderError] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
   const [cancelLoading, setCancelLoading] = useState<string | null>(null);
-  const [pendingApproval, setPendingApproval] = useState<any>(null);
-  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [negotiationTurn, setNegotiationTurn] = useState<any>(null);
+  const [negotiationLoading, setNegotiationLoading] = useState(false);
   const router = useRouter();
   const websocketServiceRef = useRef<WebSocketService | null>(null);
+  const [improvedPrice, setImprovedPrice] = useState<string>("");
+  const [negotiationError, setNegotiationError] = useState<string>("");
+  const [editOrder, setEditOrder] = useState<OrderResponse | null>(null);
+  const [editPrice, setEditPrice] = useState<string>("");
+  const [editAmount, setEditAmount] = useState<string>("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState<string>("");
 
   // Track handled approvals to prevent duplicate modals
   const handledApprovalsRef = useRef<Set<string>>(new Set());
@@ -78,7 +85,7 @@ export default function DashboardPage() {
     const handler = (event: any) => {
       const approvalKey = `${event.data.offerId}:${event.data.bidId}`;
       if (!handledApprovalsRef.current.has(approvalKey)) {
-        setPendingApproval(event.data);
+        // setPendingApproval(event.data); // Removed
         handledApprovalsRef.current.add(approvalKey);
         console.log('[SELLER APPROVAL] Modal should now be visible. Data:', event.data);
       } else {
@@ -91,13 +98,25 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // Listen for negotiation:your_turn events
   useEffect(() => {
-    if (pendingApproval) {
-      console.log('[SELLER APPROVAL] Modal is visible for approval:', pendingApproval);
-    } else {
-      console.log('[SELLER APPROVAL] Modal is hidden.');
+    const handleNegotiationTurn = (event: any) => {
+      setNegotiationTurn(event.detail);
+    };
+    window.addEventListener('negotiationYourTurn', handleNegotiationTurn);
+    return () => window.removeEventListener('negotiationYourTurn', handleNegotiationTurn);
+  }, []);
+
+  // Update improvedPrice when negotiationTurn changes
+  useEffect(() => {
+    if (negotiationTurn) {
+      setNegotiationError("");
+      // If it's your turn as BID, prefill with bestBid; if OFFER, with bestOffer
+      setImprovedPrice(
+        negotiationTurn.turn === 'BID' ? String(negotiationTurn.bestBid) : String(negotiationTurn.bestOffer)
+      );
     }
-  }, [pendingApproval]);
+  }, [negotiationTurn]);
 
   // Refetch dashboard on order matched or trade executed events
   useEffect(() => {
@@ -119,6 +138,20 @@ export default function DashboardPage() {
     return () => {
       socket.off('order:matched', handleOrderMatched);
       socket.off('trade:executed', handleTradeExecuted);
+    };
+  }, [refetchDashboard]);
+
+  // Listen for best order update events
+  useEffect(() => {
+    const socket = websocketServiceRef.current?.getSocket();
+    if (!socket) return;
+    const handleBestOrderUpdate = (data: any) => {
+      refetchDashboard();
+      toast.success('Market best price updated!');
+    };
+    socket.on('market:bestOrderUpdated', handleBestOrderUpdate);
+    return () => {
+      socket.off('market:bestOrderUpdated', handleBestOrderUpdate);
     };
   }, [refetchDashboard]);
 
@@ -155,32 +188,104 @@ export default function DashboardPage() {
     setCancelLoading(null);
   };
 
-  // When modal is closed (after approve/reject), allow future approvals for new matches
-  const handleSellerApproval = async (approved: boolean) => {
-    if (!pendingApproval) return;
-    setApprovalLoading(true);
+  const handleNegotiationResponse = async (improved: boolean) => {
+    if (!negotiationTurn) return;
+    setNegotiationLoading(true);
+    setNegotiationError("");
     try {
-      const sellerUserId = dashboard?.profile?.id || '';
-      websocketServiceRef.current?.emitSellerApprovalResponse(
-        pendingApproval.offerId,
-        pendingApproval.bidId,
-        approved,
-        sellerUserId
-      );
-      setPendingApproval(null);
-      refetchDashboard();
-      toast.success(approved ? 'Trade approved!' : 'Trade rejected.');
-      // Optionally, remove the approvalKey from handledApprovalsRef if you want to allow re-approval in the future
+      if (improved) {
+        const priceNum = Number(improvedPrice);
+        if (!priceNum || priceNum <= 0) {
+          setNegotiationError('Please enter a valid price.');
+          setNegotiationLoading(false);
+          return;
+        }
+        // Validation: improved price must be better than current for your side
+        if (negotiationTurn.turn === 'BID' && priceNum <= negotiationTurn.bestBid) {
+          setNegotiationError('Your improved bid must be higher than the current best bid.');
+          setNegotiationLoading(false);
+          return;
+        }
+        if (negotiationTurn.turn === 'OFFER' && priceNum >= negotiationTurn.bestOffer) {
+          setNegotiationError('Your improved offer must be lower than the current best offer.');
+          setNegotiationLoading(false);
+          return;
+        }
+        websocketServiceRef.current?.emitNegotiationResponse(negotiationTurn.asset, true, priceNum);
+      } else {
+        websocketServiceRef.current?.emitNegotiationResponse(negotiationTurn.asset, false);
+      }
+      setNegotiationTurn(null);
+      toast.success(improved ? 'You submitted an improved price!' : 'You passed. Market will be broadcast.');
     } catch (err) {
-      toast.error('Failed to send approval response');
+      toast.error('Failed to send negotiation response');
     } finally {
-      setApprovalLoading(false);
+      setNegotiationLoading(false);
     }
   };
 
   const handleLogout = () => {
     apiClient.logout();
     router.push("/");
+  };
+
+  // Helper to determine if it's the user's turn
+  const isMyTurn = negotiationTurn && ((negotiationTurn.turn === 'BID' && dashboard?.profile?.id === negotiationTurn.bestBidUserId) || (negotiationTurn.turn === 'OFFER' && dashboard?.profile?.id === negotiationTurn.bestOfferUserId));
+  const myUsername = dashboard?.profile?.username || 'You';
+  const counterpartyUsername = negotiationTurn && (negotiationTurn.turn === 'BID' ? negotiationTurn.bestOfferUsername : negotiationTurn.bestBidUsername);
+
+  // Analytics placeholder
+  useEffect(() => {
+    if (negotiationTurn) {
+      console.log(`[ANALYTICS] Negotiation turn for ${negotiationTurn.asset}:`, {
+        turn: negotiationTurn.turn,
+        myUsername,
+        counterpartyUsername,
+        bestBid: negotiationTurn.bestBid,
+        bestOffer: negotiationTurn.bestOffer
+      });
+    }
+  }, [negotiationTurn]);
+
+  const openEditModal = (order: OrderResponse) => {
+    setEditOrder(order);
+    setEditPrice(String(order.price));
+    setEditAmount(String(order.amount));
+    setEditError("");
+  };
+  const closeEditModal = () => {
+    setEditOrder(null);
+    setEditPrice("");
+    setEditAmount("");
+    setEditError("");
+  };
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editOrder) return;
+    setEditLoading(true);
+    setEditError("");
+    try {
+      const priceNum = Number(editPrice);
+      const amountNum = Number(editAmount);
+      if (!priceNum || priceNum <= 0) {
+        setEditError('Please enter a valid price.');
+        setEditLoading(false);
+        return;
+      }
+      if (!amountNum || amountNum <= 0) {
+        setEditError('Please enter a valid amount.');
+        setEditLoading(false);
+        return;
+      }
+      await apiClient.updateOrder(editOrder.id, { price: priceNum, amount: amountNum });
+      closeEditModal();
+      refetchDashboard();
+      toast.success('Order updated successfully!');
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setEditLoading(false);
+    }
   };
 
   if (loading || !dashboard) {
@@ -399,61 +504,61 @@ export default function DashboardPage() {
             <div className="p-6">
               {dashboard.marketData.length ? (
                 <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                  {dashboard.marketData.map((data) => (
-                    <motion.div
-                      key={data.asset}
-                      whileHover={{ scale: 1.01 }}
-                      className="p-4 border rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors duration-200"
-                    >
-                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="bg-indigo-100 p-2 rounded-lg">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                            </svg>
+                  {dashboard.marketData.map((data) => {
+                    const highestBid = data.bids && data.bids.length > 0 ? data.bids.reduce((max, b) => b.price > max.price ? b : max, data.bids[0]) : null;
+                    const lowestBid = data.bids && data.bids.length > 0 ? data.bids.reduce((min, b) => b.price < min.price ? b : min, data.bids[0]) : null;
+                    return (
+                      <motion.div key={data.asset} whileHover={{ scale: 1.01 }} className="p-4 border rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors duration-200">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="bg-indigo-100 p-2 rounded-lg">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                              </svg>
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-gray-800">{data.asset.toUpperCase()}</h4>
+                              <p className="text-xs text-gray-500">Market Depth</p>
+                            </div>
                           </div>
-                          <div>
-                            <h4 className="font-bold text-gray-800">{data.asset.toUpperCase()}</h4>
-                            <p className="text-xs text-gray-500">Market Depth</p>
+                          <div className="flex flex-col md:flex-row md:gap-8 gap-2">
+                            <div>
+                              <div className="font-semibold text-blue-700 mb-1">Bid Prices</div>
+                              {data.bids.length ? (
+                                <div className="flex flex-col gap-1">
+                                  <div>
+                                    <span className="font-bold text-blue-700">Highest: {highestBid ? `$${highestBid.price}` : '-'}</span>
+                                    {highestBid && <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs font-semibold ml-1">{highestBid.remaining}x</span>}
+                                  </div>
+                                  <div>
+                                    <span className="font-bold text-blue-700">Lowest: {lowestBid ? `$${lowestBid.price}` : '-'}</span>
+                                    {lowestBid && <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs font-semibold ml-1">{lowestBid.remaining}x</span>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-gray-400 text-sm">No bids</span>
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-orange-700 mb-1">Offers</div>
+                              {data.offers.length ? (
+                                <div className="flex flex-col gap-1">
+                                  {data.offers.map((offer) => (
+                                    <div key={offer.id} className="flex items-center gap-2 text-base font-mono">
+                                      <span className="font-bold text-orange-700">${offer.price}</span>
+                                      <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full text-xs font-semibold ml-1">{offer.remaining}x</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-gray-400 text-sm">No offers</span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        <div className="flex flex-col md:flex-row md:gap-8 gap-2">
-                          <div>
-                            <div className="font-semibold text-blue-700 mb-1">Bids</div>
-                            {data.bids && data.bids.length > 0 ? (
-                              <ul>
-                                {data.bids.map((bid: OrderResponse) => (
-                                  <li key={bid.id} className="flex items-center gap-2 text-base font-mono">
-                                    <span className="w-3 h-3 bg-blue-500 rounded-full inline-block"></span>
-                                    <span className="font-bold text-blue-700">${bid.price}</span>
-                                    <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs font-semibold ml-1">{bid.remaining}x</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <span className="text-gray-400 text-sm">No bids</span>
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-orange-700 mb-1">Offers</div>
-                            {data.offers && data.offers.length > 0 ? (
-                              <ul>
-                                {data.offers.map((offer: OrderResponse) => (
-                                  <li key={offer.id} className="flex items-center gap-2 text-base font-mono">
-                                    <span className="w-3 h-3 bg-orange-500 rounded-full inline-block"></span>
-                                    <span className="font-bold text-orange-700">${offer.price}</span>
-                                    <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full text-xs font-semibold ml-1">{offer.remaining}x</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <span className="text-gray-400 text-sm">No offers</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
+                      </motion.div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-gray-400">
@@ -509,7 +614,7 @@ export default function DashboardPage() {
                       <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 whitespace-nowrap text-sm font-mono text-gray-900">{order.id.slice(0, 8)}</td>
                         <td className="px-4 py-3 whitespace-nowrap">
-                          {order.action === "bid" ? (
+                          {order.action.toLowerCase() === "bid" ? (
                             <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 font-bold">
                               🟢 BID
                             </span>
@@ -535,15 +640,29 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
                           {(order.status.toLowerCase() === 'active') && (
-                            <motion.button
-                              whileHover={{ scale: 1.05 }}
-                              whileTap={{ scale: 0.95 }}
-                              onClick={() => handleCancelOrder(order.id)}
-                              disabled={cancelLoading === order.id}
-                              className="text-red-600 hover:text-red-900 disabled:opacity-50"
-                            >
-                              {cancelLoading === order.id ? 'Cancelling...' : 'Cancel'}
-                            </motion.button>
+                            <div className="flex gap-2 items-center">
+                              <motion.button
+                                whileHover={{ scale: 1.08 }}
+                                whileTap={{ scale: 0.96 }}
+                                onClick={() => openEditModal(order)}
+                                className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 transition disabled:opacity-50"
+                                title="Edit Order"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13h3l8-8a2.828 2.828 0 10-4-4l-8 8v3zm0 0v3h3" /></svg>
+                                Edit
+                              </motion.button>
+                              <motion.button
+                                whileHover={{ scale: 1.08 }}
+                                whileTap={{ scale: 0.96 }}
+                                onClick={() => handleCancelOrder(order.id)}
+                                disabled={cancelLoading === order.id}
+                                className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-red-600 text-white font-semibold shadow hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400 transition disabled:opacity-50"
+                                title="Cancel Order"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                {cancelLoading === order.id ? 'Cancelling...' : 'Cancel'}
+                              </motion.button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -652,7 +771,7 @@ export default function DashboardPage() {
         </motion.div>
       </div>
       <AnimatePresence>
-        {pendingApproval && (
+        {negotiationTurn && negotiationTurn.turn === 'BID' && dashboard?.profile?.id === negotiationTurn.bestBidUserId && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -660,49 +779,106 @@ export default function DashboardPage() {
             className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30"
           >
             <div className="bg-white rounded-3xl shadow-2xl p-10 max-w-md w-full flex flex-col items-center border-2 border-indigo-100">
-              <h2 className="text-2xl font-extrabold mb-3 text-orange-600 tracking-wide">Seller Approval Required</h2>
-              <p className="mb-4 text-gray-700 text-base">A buyer wants to purchase your offer:</p>
+              <h2 className="text-2xl font-extrabold mb-3 text-indigo-600 tracking-wide">Negotiation Turn</h2>
+              <p className="mb-2 text-gray-700 text-base">It's your turn to respond to the market for <span className="font-bold">{negotiationTurn.asset}</span>:</p>
+              <div className="mb-2 text-lg font-bold">
+                You are the <span className={negotiationTurn.turn === 'BID' ? 'text-blue-700' : 'text-orange-700'}>{negotiationTurn.turn === 'BID' ? 'Bidder (Buyer)' : 'Seller (Offer)'}</span>
+              </div>
+              <div className="mb-2 text-base text-gray-700">
+                <span className="font-semibold">Your username:</span> {myUsername}<br />
+                <span className="font-semibold">Counterparty:</span> {counterpartyUsername || 'Unknown'}
+              </div>
               <div className="mb-6 text-center space-y-2">
-                <span className="block text-3xl font-extrabold text-indigo-700">{pendingApproval.amount ?? 'N/A'}x</span>
-                <span className="block text-xl font-bold text-indigo-600 uppercase tracking-wider">{pendingApproval.asset ?? 'N/A'}</span>
-                <span className="block text-lg font-bold text-green-700">@ ${pendingApproval.price ?? 'N/A'}</span>
-                <span className="block text-base text-gray-500">Product: {pendingApproval.product || 'N/A'}</span>
-                <span className="block text-base text-gray-500">Contract: {pendingApproval.monthyear || 'N/A'}</span>
-                {/* Buyer details section */}
-                {(pendingApproval.buyerUsername || pendingApproval.buyerEmail || pendingApproval.buyerPhone || pendingApproval.buyerId) && (
-                  <div className="mt-4 p-3 rounded-xl bg-indigo-50 border border-indigo-100 text-left">
-                    <div className="font-semibold text-indigo-700 mb-1">Buyer Details</div>
-                    {pendingApproval.buyerUsername && (
-                      <div className="text-sm text-gray-700">Username: <span className="font-bold">{pendingApproval.buyerUsername}</span></div>
-                    )}
-                    {pendingApproval.buyerEmail && (
-                      <div className="text-sm text-gray-700">Email: <span className="font-bold">{pendingApproval.buyerEmail}</span></div>
-                    )}
-                    {pendingApproval.buyerPhone && (
-                      <div className="text-sm text-gray-700">Phone: <span className="font-bold">{pendingApproval.buyerPhone}</span></div>
-                    )}
-                    {pendingApproval.buyerId && (
-                      <div className="text-sm text-gray-500">User ID: <span className="font-mono">{pendingApproval.buyerId}</span></div>
-                    )}
-                  </div>
+                <span className="block text-3xl font-extrabold text-indigo-700">Bid: ${negotiationTurn.bestBid}</span>
+                <span className="block text-3xl font-extrabold text-orange-700">Offer: ${negotiationTurn.bestOffer}</span>
+                <span className="block text-base text-gray-500">{negotiationTurn.message}</span>
+              </div>
+              <div className="flex flex-col gap-4 w-full items-center">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={improvedPrice}
+                  onChange={e => setImprovedPrice(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 shadow-sm text-lg font-bold text-blue-900 mb-2"
+                  placeholder="Enter your improved price"
+                  disabled={negotiationLoading || !isMyTurn}
+                />
+                {negotiationError && (
+                  <div className="text-red-600 text-sm font-semibold mb-2">{negotiationError}</div>
                 )}
+                <div className="flex gap-6 w-full justify-center">
+                  <button
+                    className="px-8 py-3 rounded-xl bg-gradient-to-r from-green-500 to-blue-600 text-white font-bold text-lg shadow-lg hover:from-green-600 hover:to-blue-700 transition"
+                    onClick={() => handleNegotiationResponse(true)}
+                    disabled={negotiationLoading || !isMyTurn}
+                  >
+                    Submit Improved Price
+                  </button>
+                  <button
+                    className="px-8 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold text-lg shadow hover:bg-gray-300 transition"
+                    onClick={() => handleNegotiationResponse(false)}
+                    disabled={negotiationLoading || !isMyTurn}
+                  >
+                    Pass
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-6 mt-2 w-full justify-center">
-                <button
-                  className="px-8 py-3 rounded-xl bg-gradient-to-r from-green-500 to-blue-600 text-white font-bold text-lg shadow-lg hover:from-green-600 hover:to-blue-700 transition"
-                  onClick={() => handleSellerApproval(true)}
-                  disabled={approvalLoading}
-                >
-                  Approve
-                </button>
-                <button
-                  className="px-8 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold text-lg shadow hover:bg-gray-300 transition"
-                  onClick={() => handleSellerApproval(false)}
-                  disabled={approvalLoading}
-                >
-                  Reject
-                </button>
-              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {editOrder && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30"
+          >
+            <div className="bg-white rounded-3xl shadow-2xl p-10 max-w-md w-full flex flex-col items-center border-2 border-indigo-100">
+              <h2 className="text-2xl font-extrabold mb-3 text-indigo-600 tracking-wide">Edit Order</h2>
+              <form onSubmit={handleEditSubmit} className="w-full flex flex-col gap-4">
+                <label className="text-sm font-semibold text-gray-700">Price</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editPrice}
+                  onChange={e => setEditPrice(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 shadow-sm text-lg font-bold text-blue-900"
+                  required
+                  disabled={editLoading}
+                />
+                <label className="text-sm font-semibold text-gray-700">Amount</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={editAmount}
+                  onChange={e => setEditAmount(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 shadow-sm text-lg font-bold text-blue-900"
+                  required
+                  disabled={editLoading}
+                />
+                {editError && <div className="text-red-600 text-sm font-semibold mb-2">{editError}</div>}
+                <div className="flex gap-4 mt-2">
+                  <button
+                    type="submit"
+                    className="px-8 py-3 rounded-xl bg-gradient-to-r from-green-500 to-blue-600 text-white font-bold text-lg shadow-lg hover:from-green-600 hover:to-blue-700 transition"
+                    disabled={editLoading}
+                  >
+                    {editLoading ? 'Updating...' : 'Update Order'}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-8 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold text-lg shadow hover:bg-gray-300 transition"
+                    onClick={closeEditModal}
+                    disabled={editLoading}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
             </div>
           </motion.div>
         )}
