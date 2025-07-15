@@ -6,6 +6,7 @@ import { apiClient } from '@/lib/api';
 import { LogIn, User, Lock, TrendingUp, Loader2, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { wsService } from '@/lib/websocket';
 
 interface LoginFormProps {
   onSwitchToRegister: () => void;
@@ -24,7 +25,17 @@ export default function LoginForm({ onSwitchToRegister }: LoginFormProps) {
     setError('');
 
     try {
+      console.log('[LOGIN DEBUG] Starting login process...');
       await apiClient.login({ username, password });
+      console.log('[LOGIN DEBUG] Login successful, checking token in localStorage...');
+      
+      const token = localStorage.getItem('access_token');
+      console.log('[LOGIN DEBUG] Token after login:', token ? 'Token found' : 'No token', token?.slice(0, 20) + '...');
+      
+      console.log('[LOGIN DEBUG] Calling wsService.startAutoReconnect()...');
+      wsService.startAutoReconnect();
+      console.log('[LOGIN DEBUG] startAutoReconnect() call completed');
+      
       toast.success('Login successful! Welcome back.');
       setTimeout(() => {
         router.push('/dashboard');

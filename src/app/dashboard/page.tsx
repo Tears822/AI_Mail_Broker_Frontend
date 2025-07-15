@@ -5,8 +5,9 @@ import { apiClient, DashboardResponse, OrderRequest, OrderResponse } from "@/lib
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { WebSocketService } from '@/lib/websocket';
+import { WebSocketService, wsService } from '@/lib/websocket';
 import toast from 'react-hot-toast';
+import { getValidToken, handleAuthError } from '@/lib/auth';
 
 console.log("DashboardPage rendered");
 
@@ -33,6 +34,7 @@ export default function DashboardPage() {
   const [editAmount, setEditAmount] = useState<string>("");
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string>("");
+  const [wsConnected, setWsConnected] = useState(false);
 
   // Track handled approvals to prevent duplicate modals
   const handledApprovalsRef = useRef<Set<string>>(new Set());
@@ -57,14 +59,44 @@ export default function DashboardPage() {
     router.push("/");
   }
 
+  // Route guard: redirect to login if no valid token
+  useEffect(() => {
+    console.log('[DASHBOARD DEBUG] Route guard useEffect running...');
+    if (typeof window !== 'undefined') {
+      const token = getValidToken();
+      console.log('[DASHBOARD DEBUG] Route guard token check:', token ? 'Token valid' : 'No valid token');
+      if (!token) {
+        console.log('[DASHBOARD DEBUG] No valid token found, redirecting to login...');
+        handleAuthError();
+      }
+    }
+  }, []);
+
   // WebSocket connection
   useEffect(() => {
+    console.log('[DASHBOARD DEBUG] WebSocket initialization useEffect running...');
     if (typeof window !== "undefined" && !websocketServiceRef.current) {
-      websocketServiceRef.current = new WebSocketService();
-      websocketServiceRef.current.connect();
+      console.log('[DASHBOARD DEBUG] Setting websocketServiceRef to wsService singleton');
+      websocketServiceRef.current = wsService;
+      console.log('[DASHBOARD DEBUG] WebSocket ref set, not calling connect (handled after login)');
     }
+    
+    // No cleanup - let the shared WebSocket service stay connected for the entire session
+    // Only disconnect on logout, not on component unmount
+  }, []);
+
+  // Real-time WebSocket connection state
+  useEffect(() => {
+    const ws = websocketServiceRef.current?.getSocket();
+    if (!ws) return;
+    const handleConnect = () => setWsConnected(true);
+    const handleDisconnect = () => setWsConnected(false);
+    ws.on('connect', handleConnect);
+    ws.on('disconnect', handleDisconnect);
+    setWsConnected(ws.connected);
     return () => {
-      websocketServiceRef.current?.disconnect();
+      ws.off('connect', handleConnect);
+      ws.off('disconnect', handleDisconnect);
     };
   }, []);
 
@@ -225,8 +257,9 @@ export default function DashboardPage() {
   };
 
   const handleLogout = () => {
+    console.log('[DASHBOARD DEBUG] Logout initiated, disconnecting WebSocket...');
+    wsService.disconnect();
     apiClient.logout();
-    router.push("/");
   };
 
   // Helper to determine if it's the user's turn
@@ -345,9 +378,9 @@ export default function DashboardPage() {
           
           {/* Connection Status */}
           <div className="mt-4 flex items-center space-x-2">
-            <div className={`w-3 h-3 rounded-full ${websocketServiceRef.current?.isSocketConnected() ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
             <span className="text-sm text-gray-600">
-              {websocketServiceRef.current?.isSocketConnected() ? 'Connected' : 'Disconnected'}
+              {wsConnected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
         </div>

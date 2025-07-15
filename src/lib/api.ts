@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://localhost:8000/api';
+import { getValidToken, handleAuthError } from './auth';
+
+const API_BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api`;
 
 // Types matching the new Supabase backend
 export interface LoginRequest {
@@ -112,38 +114,27 @@ export interface DashboardResponse {
 
 class ApiClient {
   private baseURL: string;
-  private token: string | null = null;
 
   constructor() {
     this.baseURL = API_BASE_URL;
-    // Load token from localStorage if available
-    if (typeof window !== 'undefined') {
-      this.token = localStorage.getItem('access_token');
-    }
-  }
-
-  private refreshToken(): void {
-    if (typeof window !== 'undefined') {
-      this.token = localStorage.getItem('access_token');
-    }
   }
 
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    // Always refresh token before making request
-    this.refreshToken();
-    
     const url = `${this.baseURL}${endpoint}`;
     console.log("API Request:", url, options);
+    
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...options.headers as Record<string, string>,
     };
 
-    if (this.token) {
-      headers.Authorization = `Bearer ${this.token}`;
+    // Use getValidToken to check expiry before making request
+    const token = getValidToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
     }
 
     const response = await fetch(url, {
@@ -152,9 +143,10 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
         // Token expired or invalid
-        this.logout();
+        console.log('Authentication error detected, redirecting to login...');
+        handleAuthError();
         throw new Error('Authentication failed');
       }
       const errorData = await response.json().catch(() => ({}));
@@ -170,7 +162,6 @@ class ApiClient {
       body: JSON.stringify(data),
     });
 
-    this.token = response.access_token;
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', response.access_token);
       localStorage.setItem('username', response.user.username);
@@ -186,7 +177,6 @@ class ApiClient {
       body: JSON.stringify(credentials),
     });
 
-    this.token = response.access_token;
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', response.access_token);
       localStorage.setItem('username', response.user.username);
@@ -196,8 +186,7 @@ class ApiClient {
     return response;
   }
 
-  logout() {
-    this.token = null;
+  logout(): void {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('access_token');
       localStorage.removeItem('username');
@@ -279,7 +268,8 @@ class ApiClient {
   }
 
   isAuthenticated(): boolean {
-    return !!this.token;
+    const token = getValidToken();
+    return token !== null;
   }
 
   getUsername(): string | null {
