@@ -232,7 +232,7 @@ export default function DashboardPage() {
     const handleBestOrderUpdate = (data: any) => {
       refetchDashboard();
       toast.success('Market best price updated!', {
-        duration: 8000,
+        duration: 4000,
         style: {
           background: '#10b981',
           color: '#fff',
