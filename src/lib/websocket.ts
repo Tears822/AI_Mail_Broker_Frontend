@@ -129,6 +129,27 @@ export class WebSocketService {
       window.dispatchEvent(new CustomEvent('marketUpdate', { detail: event.data }));
     });
 
+    // Handle market price changes (highest bid or lowest offer changes)
+    this.socket.on('market:priceChanged', (event: WebSocketEvent) => {
+      console.log('📈 Market price changed:', event.data);
+      
+      const { asset, bestBid, bestOffer, previousBestBid, previousBestOffer, changeType } = event.data;
+      let message = `Price change for ${asset}:`;
+      
+      if (changeType?.bidChanged && bestBid !== previousBestBid) {
+        message += `\nHighest bid: ${previousBestBid || 'N/A'} → ${bestBid}`;
+      }
+      if (changeType?.offerChanged && bestOffer !== previousBestOffer) {
+        message += `\nLowest offer: ${previousBestOffer || 'N/A'} → ${bestOffer}`;
+      }
+      
+      // Show toast notification for price changes
+      toast.success(message, { duration: 4000 });
+      
+      // Dispatch custom event for UI updates
+      window.dispatchEvent(new CustomEvent('marketPriceChanged', { detail: event.data }));
+    });
+
     // Handle negotiation turn events
     this.socket.on('negotiation:your_turn', (event: WebSocketEvent) => {
       console.log('[FRONTEND] Received negotiation:your_turn event:', event.data);
@@ -184,6 +205,15 @@ export class WebSocketService {
       this.isConnected = false;
     }
     this.stopAutoReconnect();
+  }
+
+  /**
+   * Manual connect method that can be called from UI
+   */
+  public manualConnect(): void {
+    console.log('[WebSocket DEBUG] Manual connect requested');
+    this.stopAutoReconnect(); // Stop any existing auto-reconnect
+    this.connect();
   }
 
   /**
