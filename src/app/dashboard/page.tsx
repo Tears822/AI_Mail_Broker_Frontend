@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { WebSocketService, wsService } from '@/lib/websocket';
-import toast from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 import { getValidToken, handleAuthError } from '@/lib/auth';
 
 console.log("DashboardPage rendered");
@@ -39,6 +39,10 @@ export default function DashboardPage() {
 
   // Track handled approvals to prevent duplicate modals
   const handledApprovalsRef = useRef<Set<string>>(new Set());
+
+  // Quantity confirmation modal state
+  const [quantityConfirmation, setQuantityConfirmation] = useState<any>(null);
+  const [quantityConfirmationLoading, setQuantityConfirmationLoading] = useState(false);
 
   // Use React Query for dashboard data
   const {
@@ -115,11 +119,37 @@ export default function DashboardPage() {
   // Listen for market updates
   useEffect(() => {
     const handleMarketUpdate = () => {
+      console.log('[DASHBOARD] Market update event received, refetching dashboard...');
       refetchDashboard();
     };
 
+    const handleTradeExecuted = () => {
+      console.log('[DASHBOARD] Trade executed event received, refetching dashboard...');
+      refetchDashboard();
+    };
+
+    const handleOrderPartiallyFilled = () => {
+      console.log('[DASHBOARD] Order partially filled event received, refetching dashboard...');
+      refetchDashboard();
+    };
+
+    const handleOrderFilled = () => {
+      console.log('[DASHBOARD] Order filled event received, refetching dashboard...');
+      refetchDashboard();
+    };
+
+    // Listen for all market and order events
     window.addEventListener('marketUpdate', handleMarketUpdate);
-    return () => window.removeEventListener('marketUpdate', handleMarketUpdate);
+    window.addEventListener('tradeExecuted', handleTradeExecuted);
+    window.addEventListener('orderPartiallyFilled', handleOrderPartiallyFilled);
+    window.addEventListener('orderFilled', handleOrderFilled);
+    
+    return () => {
+      window.removeEventListener('marketUpdate', handleMarketUpdate);
+      window.removeEventListener('tradeExecuted', handleTradeExecuted);
+      window.removeEventListener('orderPartiallyFilled', handleOrderPartiallyFilled);
+      window.removeEventListener('orderFilled', handleOrderFilled);
+    };
   }, [refetchDashboard]);
 
   // Listen for seller approval events
@@ -149,6 +179,16 @@ export default function DashboardPage() {
     };
     window.addEventListener('negotiationYourTurn', handleNegotiationTurn);
     return () => window.removeEventListener('negotiationYourTurn', handleNegotiationTurn);
+  }, []);
+
+  // Listen for quantity confirmation requests
+  useEffect(() => {
+    const handleQuantityConfirmationRequest = (event: any) => {
+      console.log('[DASHBOARD] Quantity confirmation request received:', event.detail);
+      setQuantityConfirmation(event.detail);
+    };
+    window.addEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest);
+    return () => window.removeEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest);
   }, []);
 
   // Update improvedPrice when negotiationTurn changes
@@ -191,7 +231,16 @@ export default function DashboardPage() {
     if (!socket) return;
     const handleBestOrderUpdate = (data: any) => {
       refetchDashboard();
-      toast.success('Market best price updated!');
+      toast.success('Market best price updated!', {
+        duration: 8000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '📈',
+      });
     };
     socket.on('market:bestOrderUpdated', handleBestOrderUpdate);
     return () => {
@@ -260,9 +309,27 @@ export default function DashboardPage() {
         websocketServiceRef.current?.emitNegotiationResponse(negotiationTurn.asset, false);
       }
       setNegotiationTurn(null);
-      toast.success(improved ? 'You submitted an improved price!' : 'You passed. Market will be broadcast.');
+      toast.success(improved ? 'You submitted an improved price!' : 'You passed. Market will be broadcast.', {
+        duration: 8000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: improved ? '💡' : '👋',
+      });
     } catch (err) {
-      toast.error('Failed to send negotiation response');
+      toast.error('Failed to send negotiation response', {
+        duration: 8000,
+        style: {
+          background: '#ef4444',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '❌',
+      });
     } finally {
       setNegotiationLoading(false);
     }
@@ -272,6 +339,76 @@ export default function DashboardPage() {
     console.log('[DASHBOARD DEBUG] Logout initiated, disconnecting WebSocket...');
     wsService.disconnect();
     apiClient.logout();
+  };
+
+  // Handle quantity confirmation response
+  const handleQuantityConfirmationResponse = async (accepted: boolean) => {
+    if (!quantityConfirmation) return;
+    
+    setQuantityConfirmationLoading(true);
+    
+    try {
+      if (accepted) {
+        // User wants the additional quantity
+        const newQuantity = quantityConfirmation.yourQuantity + quantityConfirmation.additionalQuantity;
+        console.log(`[DASHBOARD] User accepted additional quantity. New total: ${newQuantity}`);
+        
+        websocketServiceRef.current?.emitQuantityConfirmationResponse(
+          quantityConfirmation.confirmationKey, 
+          true, 
+          newQuantity
+        );
+        
+        toast.success(`You accepted the additional ${quantityConfirmation.additionalQuantity} lots. New total: ${newQuantity} lots.`, {
+          duration: 12000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+            border: '2px solid #34d399',
+          },
+          icon: '✅',
+        });
+      } else {
+        // User declined the additional quantity
+        console.log('[DASHBOARD] User declined additional quantity');
+        
+        websocketServiceRef.current?.emitQuantityConfirmationResponse(
+          quantityConfirmation.confirmationKey, 
+          false
+        );
+        
+        toast.success(`You declined the additional quantity. Trade will proceed with ${quantityConfirmation.yourQuantity} lots.`, {
+          duration: 10000,
+          style: {
+            background: '#3b82f6',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '👍',
+        });
+      }
+      
+      // Close the modal
+      setQuantityConfirmation(null);
+      
+    } catch (err) {
+      console.error('[DASHBOARD] Error responding to quantity confirmation:', err);
+      toast.error('Failed to send response. Please try again.', {
+        duration: 10000,
+        style: {
+          background: '#ef4444',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '❌',
+      });
+    } finally {
+      setQuantityConfirmationLoading(false);
+    }
   };
 
   // Helper to determine if it's the user's turn
@@ -325,7 +462,16 @@ export default function DashboardPage() {
       await apiClient.updateOrder(editOrder.id, { price: priceNum, amount: amountNum });
       closeEditModal();
       refetchDashboard();
-      toast.success('Order updated successfully!');
+      toast.success('Order updated successfully!', {
+        duration: 8000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '🔄',
+      });
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Update failed');
     } finally {
@@ -350,6 +496,28 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 p-4 md:p-8">
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 5000,
+          style: {
+            background: '#333',
+            color: '#fff',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          },
+          success: {
+            icon: '✅',
+          },
+          error: {
+            icon: '❌',
+          },
+          loading: {
+            icon: '⚙️',
+          },
+          className: 'text-sm',
+        }}
+      />
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Header */}
         <motion.header
@@ -403,7 +571,10 @@ export default function DashboardPage() {
               whileTap={{ scale: 0.95 }}
               onClick={() => {
                 setWsConnecting(true);
-                toast('Connecting to server...');
+                toast('Connecting to server...', {
+                  duration: 3000,
+                  icon: '⚙️',
+                });
                 websocketServiceRef.current?.manualConnect();
               }}
               disabled={wsConnected || wsConnecting}
@@ -447,7 +618,10 @@ export default function DashboardPage() {
                 whileTap={{ scale: 0.95 }}
                 onClick={() => {
                   websocketServiceRef.current?.disconnect();
-                  toast('Disconnected from server');
+                  toast('Disconnected from server', {
+                    duration: 3000,
+                    icon: '👋',
+                  });
                 }}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium shadow-md transition-all bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white"
               >
@@ -987,6 +1161,61 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {quantityConfirmation && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30"
+          >
+            <div className="bg-white rounded-3xl shadow-2xl p-10 max-w-lg w-full flex flex-col items-center border-2 border-indigo-100">
+              <h2 className="text-2xl font-extrabold mb-4 text-indigo-600 tracking-wide">Additional Quantity Available</h2>
+              
+              <div className="mb-6 text-center space-y-3">
+                <div className="bg-blue-50 p-4 rounded-xl">
+                  <h3 className="text-lg font-bold text-blue-900">Order Details</h3>
+                  <p className="text-blue-800">Asset: <span className="font-bold">{quantityConfirmation.asset}</span></p>
+                  <p className="text-blue-800">Price: <span className="font-bold">${quantityConfirmation.price}</span></p>
+                  <p className="text-blue-800">Your current quantity: <span className="font-bold">{quantityConfirmation.yourQuantity} lots</span></p>
+                  <p className="text-blue-800">Additional available: <span className="font-bold text-green-600">{quantityConfirmation.additionalQuantity} lots</span></p>
+                </div>
+                
+                <div className="bg-green-50 p-4 rounded-xl">
+                  <p className="text-green-900 font-semibold">
+                    {quantityConfirmation.side === 'BUY' ? 'Do you want to buy' : 'Do you want to sell'} an additional{' '}
+                    <span className="font-bold text-lg">{quantityConfirmation.additionalQuantity} lots</span>?
+                  </p>
+                  <p className="text-green-800 text-sm mt-1">
+                    Total would be: <span className="font-bold">{quantityConfirmation.yourQuantity + quantityConfirmation.additionalQuantity} lots</span> at ${quantityConfirmation.price}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex gap-4 w-full justify-center">
+                <button
+                  className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-green-500 to-green-600 text-white font-bold text-lg shadow-lg hover:from-green-600 hover:to-green-700 transition disabled:opacity-50"
+                  onClick={() => handleQuantityConfirmationResponse(true)}
+                  disabled={quantityConfirmationLoading}
+                >
+                  {quantityConfirmationLoading ? 'Processing...' : `Yes, ${quantityConfirmation.side === 'BUY' ? 'Buy' : 'Sell'} ${quantityConfirmation.additionalQuantity} More`}
+                </button>
+                <button
+                  className="flex-1 px-6 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold text-lg shadow hover:bg-gray-300 transition disabled:opacity-50"
+                  onClick={() => handleQuantityConfirmationResponse(false)}
+                  disabled={quantityConfirmationLoading}
+                >
+                  {quantityConfirmationLoading ? 'Processing...' : 'No, Keep Original'}
+                </button>
+              </div>
+              
+              <p className="text-xs text-gray-500 mt-4 text-center">
+                You have 30 seconds to respond. If no response, trade will proceed with original quantity.
+              </p>
             </div>
           </motion.div>
         )}

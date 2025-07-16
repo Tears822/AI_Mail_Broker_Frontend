@@ -67,54 +67,253 @@ export class WebSocketService {
     // Add reconnection event listeners
     this.socket.on('reconnect_attempt', (attempt) => {
       console.log(`WebSocket reconnect attempt #${attempt}`);
-      toast('Reconnecting to server... (attempt ' + attempt + ')');
+      toast('Reconnecting to server... (attempt ' + attempt + ')', {
+        duration: 8000,
+        style: {
+          background: '#3b82f6',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '🔄',
+      });
     });
     this.socket.on('reconnect_error', (error) => {
       console.error('WebSocket reconnection error:', error);
-      toast.error('WebSocket reconnection error');
+      toast.error('WebSocket reconnection error', {
+        duration: 10000,
+        style: {
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        iconTheme: {
+          primary: '#ef4444',
+          secondary: '#fff',
+        },
+      });
     });
     this.socket.on('reconnect_failed', () => {
       console.error('WebSocket reconnection failed');
-      toast.error('Unable to reconnect. Please refresh the page.');
+      toast.error('Unable to reconnect. Please refresh the page.', {
+        duration: Infinity, // Keep until manually dismissed
+        style: {
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        iconTheme: {
+          primary: '#ef4444',
+          secondary: '#fff',
+        },
+      });
     });
 
     // Handle order events
     this.socket.on('order:created', (event: WebSocketEvent) => {
       console.log('📊 Order created:', event.data);
-      toast.success(`New order: ${event.data.action} ${event.data.amount} ${event.data.asset}`);
+      toast.success(`New order: ${event.data.action} ${event.data.amount} ${event.data.asset}`, {
+        duration: 8000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '📊',
+      });
     });
 
     this.socket.on('order:updated', (event: WebSocketEvent) => {
       console.log('📊 Order updated:', event.data);
-      toast(`Order updated: ${event.data.orderId || event.data.id}`);
+      toast(`Order updated: ${event.data.orderId || event.data.id}`, {
+        duration: 8000,
+        style: {
+          background: '#3b82f6',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '📝',
+      });
       window.dispatchEvent(new CustomEvent('orderUpdated', { detail: event.data }));
     });
 
     this.socket.on('order:matched', (event: WebSocketEvent) => {
       console.log('📊 Order matched:', event.data);
-      toast.success(`Order matched: ${event.data.filledAmount} ${event.data.asset} @ ${event.data.price}`);
+      toast.success(`Order matched: ${event.data.amount} ${event.data.asset} @ ${event.data.price}${event.data.matchType === 'FULL_MATCH' ? '' : ' (partial)'}`, {
+        duration: 10000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '🎯',
+      });
     });
 
     this.socket.on('order:cancelled', (event: WebSocketEvent) => {
       console.log('📊 Order cancelled:', event.data);
-      toast(`Order cancelled: ${event.data.orderId}`);
+      toast(`Order cancelled: ${event.data.orderId}`, {
+        duration: 8000,
+        style: {
+          background: '#f59e0b',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '❌',
+      });
+    });
+
+    // Handle partial fill events (seller quantity > buyer quantity)
+    this.socket.on('order:partial_fill', (event: WebSocketEvent) => {
+      console.log('🔄 Order partially filled:', event.data);
+      toast.success(`Partial fill: ${event.data.filledAmount}/${event.data.originalAmount} ${event.data.asset} @ $${event.data.price}. ${event.data.remainingAmount} remaining.`, { 
+        duration: 12000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '🔄',
+      });
+      
+      // Trigger dashboard refresh for partial fills
+      window.dispatchEvent(new CustomEvent('orderPartiallyFilled', { detail: event.data }));
+    });
+
+    // Handle order fully filled events  
+    this.socket.on('order:filled', (event: WebSocketEvent) => {
+      console.log('✅ Order fully filled:', event.data);
+      toast.success(`Order filled: ${event.data.amount} ${event.data.asset} @ $${event.data.price}`, { 
+        duration: 10000,
+        style: {
+          background: '#10b981',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '✅',
+      });
+      
+      // Trigger dashboard refresh for filled orders
+      window.dispatchEvent(new CustomEvent('orderFilled', { detail: event.data }));
     });
 
     // Handle trade events
     this.socket.on('trade:executed', (event: WebSocketEvent) => {
       console.log('💱 Trade executed:', event.data);
-      // Only show toast for sellers, not buyers
+      
+      // Show toast notification for relevant users
       if (event.data.side === 'sell') {
-        toast.success(`Trade executed: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`);
+        toast.success(`Trade executed: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`, {
+          duration: 10000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '💱',
+        });
+      } else if (event.data.side === 'buy') {
+        toast.success(`Your order was filled: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`, {
+          duration: 10000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '🛒',
+        });
       }
+      
+      // Trigger market update event to refresh dashboard
+      window.dispatchEvent(new CustomEvent('tradeExecuted', { detail: event.data }));
+      
+      // Also trigger market update to refresh order book display
+      window.dispatchEvent(new CustomEvent('marketUpdate', { detail: event.data }));
     });
 
     // Handle market updates
     this.socket.on('market:update', (event: WebSocketEvent) => {
       console.log('📈 Market update:', event.data);
       
-      // Only show toast if priceChanged is true
-      if (event.data.priceChanged && event.data.asset) {
+      // Handle different types of market updates
+      if (event.data.type === 'remaining_quantity_available') {
+        // Special handling for remaining quantity broadcasts
+        const { asset, action, remainingQuantity, price, message } = event.data;
+        
+        if (action === 'OFFER') {
+          // Remaining quantity available for sale
+          toast.success(`🔥 ${asset}: ${remainingQuantity} lots available for sale at $${price}!`, { 
+            duration: 15000, // Long duration for trading opportunities
+            style: {
+              background: '#f59e0b',
+              color: '#fff',
+              padding: '16px',
+              borderRadius: '8px',
+              border: '2px solid #fbbf24',
+            },
+            icon: '💰',
+          });
+        } else if (action === 'BID') {
+          // Remaining quantity wanted for purchase  
+          toast.success(`🔥 ${asset}: ${remainingQuantity} lots wanted at $${price}!`, { 
+            duration: 15000, // Long duration for trading opportunities
+            style: {
+              background: '#3b82f6',
+              color: '#fff',
+              padding: '16px',
+              borderRadius: '8px',
+              border: '2px solid #60a5fa',
+            },
+            icon: '🛒',
+          });
+        }
+        
+        // Dispatch custom event for any UI components that want to highlight this opportunity
+        window.dispatchEvent(new CustomEvent('remainingQuantityAvailable', { 
+          detail: {
+            asset,
+            action,
+            remainingQuantity,
+            price,
+            message,
+            timestamp: event.timestamp
+          }
+        }));
+        
+      } else if (event.data.type === 'trade_completed') {
+        // Full trade completion
+        toast.success(event.data.message || 'Trade completed successfully!', {
+          duration: 10000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '✅',
+        });
+        
+      } else if (event.data.tradeExecuted) {
+        // General trade execution with market update
+        toast.success(`${event.data.message || 'Market updated after trade'}`, {
+          duration: 8000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '📈',
+        });
+        
+      } else if (event.data.priceChanged && event.data.asset) {
+        // Only show toast if priceChanged is true
         const { asset, bestBid, bestOffer, previousBestBid, previousBestOffer } = event.data;
         let message = `Market updated: ${asset}`;
         
@@ -124,8 +323,18 @@ export class WebSocketService {
         if (bestOffer !== previousBestOffer && bestOffer !== null) {
           message += `\nOffer: ${previousBestOffer || 'N/A'} → ${bestOffer}`;
         }
-        toast.success(message);
+        toast.success(message, {
+          duration: 8000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '📈',
+        });
       }
+      
       window.dispatchEvent(new CustomEvent('marketUpdate', { detail: event.data }));
     });
 
@@ -144,7 +353,16 @@ export class WebSocketService {
       }
       
       // Show toast notification for price changes
-      toast.success(message, { duration: 4000 });
+      toast.success(message, { 
+        duration: 10000,
+        style: {
+          background: '#8b5cf6',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '📊',
+      });
       
       // Dispatch custom event for UI updates
       window.dispatchEvent(new CustomEvent('marketPriceChanged', { detail: event.data }));
@@ -154,6 +372,12 @@ export class WebSocketService {
     this.socket.on('negotiation:your_turn', (event: WebSocketEvent) => {
       console.log('[FRONTEND] Received negotiation:your_turn event:', event.data);
       window.dispatchEvent(new CustomEvent('negotiationYourTurn', { detail: event.data }));
+    });
+
+    // Handle quantity confirmation requests
+    this.socket.on('quantity:confirmation_request', (event: WebSocketEvent) => {
+      console.log('[FRONTEND] Received quantity:confirmation_request event:', event.data);
+      window.dispatchEvent(new CustomEvent('quantityConfirmationRequest', { detail: event.data }));
     });
   }
 
@@ -272,6 +496,17 @@ export class WebSocketService {
       this.socket.emit('negotiation:response', payload);
     } else {
       console.error('[FRONTEND] Cannot emit negotiation response: socket not connected');
+    }
+  }
+
+  public emitQuantityConfirmationResponse(confirmationKey: string, accepted: boolean, newQuantity?: number) {
+    if (this.socket && this.isConnected) {
+      let payload: any = { confirmationKey, accepted };
+      if (newQuantity !== undefined) payload.newQuantity = newQuantity;
+      console.log('[FRONTEND] Emitting quantity confirmation response:', { eventName: 'quantity:confirmation_response', payload });
+      this.socket.emit('quantity:confirmation_response', payload);
+    } else {
+      console.error('[FRONTEND] Cannot emit quantity confirmation response: socket not connected');
     }
   }
 
