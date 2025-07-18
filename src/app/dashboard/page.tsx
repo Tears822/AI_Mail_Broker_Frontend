@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { WebSocketService, wsService } from '@/lib/websocket';
-import toast, { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import { getValidToken, handleAuthError } from '@/lib/auth';
 
 console.log("DashboardPage rendered");
@@ -23,7 +23,17 @@ export default function DashboardPage() {
   const [orderError, setOrderError] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
   const [cancelLoading, setCancelLoading] = useState<string | null>(null);
-  const [negotiationTurn, setNegotiationTurn] = useState<any>(null);
+  const [negotiationTurn, setNegotiationTurn] = useState<{
+    asset: string;
+    turn: string;
+    bestBid: number;
+    bestOffer: number;
+    bestBidUserId: string;
+    bestOfferUserId: string;
+    bestBidUsername: string;
+    bestOfferUsername: string;
+    message: string;
+  } | null>(null);
   const [negotiationLoading, setNegotiationLoading] = useState(false);
   const router = useRouter();
   const websocketServiceRef = useRef<WebSocketService | null>(null);
@@ -41,7 +51,14 @@ export default function DashboardPage() {
   const handledApprovalsRef = useRef<Set<string>>(new Set());
 
   // Quantity confirmation modal state
-  const [quantityConfirmation, setQuantityConfirmation] = useState<any>(null);
+  const [quantityConfirmation, setQuantityConfirmation] = useState<{
+    asset: string;
+    price: number;
+    yourQuantity: number;
+    additionalQuantity: number;
+    side: string;
+    confirmationKey: string;
+  } | null>(null);
   const [quantityConfirmationLoading, setQuantityConfirmationLoading] = useState(false);
 
   // Use React Query for dashboard data
@@ -83,7 +100,15 @@ export default function DashboardPage() {
     if (typeof window !== "undefined" && !websocketServiceRef.current) {
       console.log('[DASHBOARD DEBUG] Setting websocketServiceRef to wsService singleton');
       websocketServiceRef.current = wsService;
-      console.log('[DASHBOARD DEBUG] WebSocket ref set, not calling connect (handled after login)');
+      
+      // Check if we have a valid token and start auto-reconnect (for page refreshes)
+      const token = getValidToken();
+      if (token) {
+        console.log('[DASHBOARD DEBUG] Valid token found, starting auto-reconnect for WebSocket...');
+        wsService.startAutoReconnect();
+      } else {
+        console.log('[DASHBOARD DEBUG] No valid token, WebSocket will connect after login');
+      }
     }
     
     // No cleanup - let the shared WebSocket service stay connected for the entire session
@@ -156,10 +181,9 @@ export default function DashboardPage() {
   useEffect(() => {
     const socket = websocketServiceRef.current?.getSocket();
     if (!socket) return;
-    const handler = (event: any) => {
+    const handler = (event: { data: { offerId: string; bidId: string } }) => {
       const approvalKey = `${event.data.offerId}:${event.data.bidId}`;
       if (!handledApprovalsRef.current.has(approvalKey)) {
-        // setPendingApproval(event.data); // Removed
         handledApprovalsRef.current.add(approvalKey);
         console.log('[SELLER APPROVAL] Modal should now be visible. Data:', event.data);
       } else {
@@ -174,21 +198,21 @@ export default function DashboardPage() {
 
   // Listen for negotiation:your_turn events
   useEffect(() => {
-    const handleNegotiationTurn = (event: any) => {
+    const handleNegotiationTurn = (event: CustomEvent) => {
       setNegotiationTurn(event.detail);
     };
-    window.addEventListener('negotiationYourTurn', handleNegotiationTurn);
-    return () => window.removeEventListener('negotiationYourTurn', handleNegotiationTurn);
+    window.addEventListener('negotiationYourTurn', handleNegotiationTurn as EventListener);
+    return () => window.removeEventListener('negotiationYourTurn', handleNegotiationTurn as EventListener);
   }, []);
 
   // Listen for quantity confirmation requests
   useEffect(() => {
-    const handleQuantityConfirmationRequest = (event: any) => {
+    const handleQuantityConfirmationRequest = (event: CustomEvent) => {
       console.log('[DASHBOARD] Quantity confirmation request received:', event.detail);
       setQuantityConfirmation(event.detail);
     };
-    window.addEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest);
-    return () => window.removeEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest);
+    window.addEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest as EventListener);
+    return () => window.removeEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest as EventListener);
   }, []);
 
   // Update improvedPrice when negotiationTurn changes
@@ -229,7 +253,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const socket = websocketServiceRef.current?.getSocket();
     if (!socket) return;
-    const handleBestOrderUpdate = (data: any) => {
+    const handleBestOrderUpdate = () => {
       refetchDashboard();
       toast.success('Market best price updated!', {
         duration: 4000,
@@ -277,7 +301,9 @@ export default function DashboardPage() {
     try {
       await apiClient.cancelOrder(orderId);
       refetchDashboard();
-    } catch {}
+    } catch {
+      // Error handled silently
+    }
     setCancelLoading(null);
   };
 
@@ -319,7 +345,7 @@ export default function DashboardPage() {
         },
         icon: improved ? '💡' : '👋',
       });
-    } catch (err) {
+    } catch {
       toast.error('Failed to send negotiation response', {
         duration: 8000,
         style: {
@@ -427,7 +453,7 @@ export default function DashboardPage() {
         bestOffer: negotiationTurn.bestOffer
       });
     }
-  }, [negotiationTurn]);
+  }, [negotiationTurn, myUsername, counterpartyUsername]);
 
   const openEditModal = (order: OrderResponse) => {
     setEditOrder(order);
@@ -496,28 +522,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 p-4 md:p-8">
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          duration: 5000,
-          style: {
-            background: '#333',
-            color: '#fff',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-          },
-          success: {
-            icon: '✅',
-          },
-          error: {
-            icon: '❌',
-          },
-          loading: {
-            icon: '⚙️',
-          },
-          className: 'text-sm',
-        }}
-      />
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Header */}
         <motion.header
@@ -538,17 +542,35 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={handleLogout}
-            className="flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white px-6 py-3 rounded-xl font-medium shadow-md transition-all"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            Logout
-          </motion.button>
+          
+          <div className="flex items-center gap-4">
+            {/* Admin Panel Link */}
+            {dashboard.profile.role === 'ADMIN' && (
+              <a
+                href="/admin"
+                className="inline-flex items-center px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Admin Panel
+              </a>
+            )}
+            
+            {/* Connection Status */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleLogout}
+              className="flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white px-6 py-3 rounded-xl font-medium shadow-md transition-all"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Logout
+            </motion.button>
+          </div>
         </motion.header>
 
         {/* Connection Status */}
@@ -964,11 +986,85 @@ export default function DashboardPage() {
           </div>
         </motion.div>
 
-        {/* Recent Trades Card */}
+        {/* My Trades Card - NEW */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
+          className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100"
+        >
+          <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-6 text-white">
+            <h3 className="text-xl font-bold flex items-center gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              My Trades
+            </h3>
+            <p className="text-purple-100 text-sm mt-1">Your trading history</p>
+          </div>
+          <div className="p-6">
+            {dashboard.userTrades && dashboard.userTrades.length ? (
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {dashboard.userTrades.slice(0, 10).map((trade) => {
+                  const isUserBuyer = trade.buyerId === dashboard.profile.id;
+                  const role = isUserBuyer ? 'BOUGHT' : 'SOLD';
+                  const roleColor = isUserBuyer ? 'text-blue-600' : 'text-orange-600';
+                  const roleIcon = isUserBuyer ? '🟢' : '🟠';
+                  
+                  return (
+                    <motion.div
+                      key={trade.id}
+                      whileHover={{ scale: 1.01 }}
+                      className="p-4 border rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors duration-200"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{roleIcon}</span>
+                            <h4 className="font-semibold text-gray-800">{trade.asset}</h4>
+                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${roleColor} bg-gray-100`}>
+                              {role}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-500 mt-1">
+                            {isUserBuyer ? 
+                              `Bought from ${trade.sellerId}` : 
+                              `Sold to ${trade.buyerId}`
+                            }
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {new Date(trade.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-green-600">${trade.price}</p>
+                          <p className="text-sm text-gray-500">{trade.amount} units</p>
+                          <p className="text-xs text-gray-400 font-mono">
+                            Total: ${(Number(trade.price) * Number(trade.amount)).toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                <p className="text-lg font-medium">No trades yet</p>
+                <p className="text-sm">Your completed trades will appear here</p>
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Recent Trades Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
           className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100"
         >
           <div className="bg-gradient-to-r from-green-600 to-blue-600 p-6 text-white">
@@ -976,8 +1072,9 @@ export default function DashboardPage() {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
-              Recent Trades
+              Recent Trades (All Users)
             </h3>
+            <p className="text-green-100 text-sm mt-1">Latest market activity</p>
           </div>
           <div className="p-6">
             {dashboard.trades.length ? (
@@ -993,6 +1090,9 @@ export default function DashboardPage() {
                         <h4 className="font-semibold text-gray-800">{trade.asset}</h4>
                         <p className="text-sm text-gray-500">
                           {trade.buyerId} → {trade.sellerId}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {new Date(trade.createdAt).toLocaleString()}
                         </p>
                       </div>
                       <div className="text-right">
@@ -1019,7 +1119,7 @@ export default function DashboardPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
+          transition={{ delay: 0.6 }}
           className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100"
         >
           <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
@@ -1062,7 +1162,7 @@ export default function DashboardPage() {
           >
             <div className="bg-white rounded-3xl shadow-2xl p-10 max-w-md w-full flex flex-col items-center border-2 border-indigo-100">
               <h2 className="text-2xl font-extrabold mb-3 text-indigo-600 tracking-wide">Negotiation Turn</h2>
-              <p className="mb-2 text-gray-700 text-base">It's your turn to respond to the market for <span className="font-bold">{negotiationTurn.asset}</span>:</p>
+              <p className="mb-2 text-gray-700 text-base">It&apos;s your turn to respond to the market for <span className="font-bold">{negotiationTurn.asset}</span>:</p>
               <div className="mb-2 text-lg font-bold">
                 You are the <span className={negotiationTurn.turn === 'BID' ? 'text-blue-700' : 'text-orange-700'}>{negotiationTurn.turn === 'BID' ? 'Bidder (Buyer)' : 'Seller (Offer)'}</span>
               </div>
@@ -1214,7 +1314,7 @@ export default function DashboardPage() {
               </div>
               
               <p className="text-xs text-gray-500 mt-4 text-center">
-                You have 30 seconds to respond. If no response, trade will proceed with original quantity.
+                You have 60 seconds to respond. If no response, trade will proceed with original quantity.
               </p>
             </div>
           </motion.div>

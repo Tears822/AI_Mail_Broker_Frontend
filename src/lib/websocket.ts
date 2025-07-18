@@ -4,7 +4,7 @@ import { getValidToken, handleAuthError } from './auth';
 
 export interface WebSocketEvent {
   type: string;
-  data: any;
+  data: any; // eslint-disable-line @typescript-eslint/no-explicit-any -- Dynamic WebSocket payloads are hard to type strictly
   timestamp: string;
 }
 
@@ -14,15 +14,23 @@ export class WebSocketService {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectDelay: number = 1000;
-  private autoReconnectInterval: any = null;
+  private autoReconnectInterval: NodeJS.Timeout | null = null;
   private autoReconnectDelay: number = 5000; // 5 seconds
+  private hasConnectedBefore: boolean = false; // Track if we've connected before
+  private eventHandlersSetup: boolean = false; // Track if event handlers are already set up
 
   constructor() {
     // Removed setupSocket() method. All socket creation and reconnection logic is now handled by connect().
   }
 
   private setupEventHandlers() {
-    if (!this.socket) return;
+    if (!this.socket || this.eventHandlersSetup) {
+      console.log('[WebSocket DEBUG] Skipping event handler setup - already configured');
+      return;
+    }
+
+    console.log('[WebSocket DEBUG] Setting up event handlers...');
+    this.eventHandlersSetup = true;
 
     this.socket.on('connect', () => {
       console.log('[WebSocket DEBUG] 🔌 WebSocket connected successfully');
@@ -30,6 +38,21 @@ export class WebSocketService {
       this.isConnected = true;
       this.reconnectAttempts = 0;
       this.stopAutoReconnect(); // Stop timer when connected
+      
+      // Show toast notification only on reconnections, not initial connection
+      if (this.hasConnectedBefore) {
+        toast.success('Connection restored! You\'re back online.', {
+          duration: 5000,
+          style: {
+            background: '#10b981',
+            color: '#fff',
+            padding: '16px',
+            borderRadius: '8px',
+          },
+          icon: '🔌',
+        });
+      }
+      this.hasConnectedBefore = true;
       
       // Subscribe to updates
       this.socket?.emit('subscribe_orders');
@@ -51,9 +74,9 @@ export class WebSocketService {
       console.error('[WebSocket DEBUG] WebSocket connection error:', error);
       console.error('[WebSocket DEBUG] Error details:', {
         message: error.message,
-        description: (error as any).description,
-        context: (error as any).context,
-        type: (error as any).type
+        description: (error as unknown as { description?: string }).description,
+        context: (error as unknown as { context?: string }).context,
+        type: (error as unknown as { type?: string }).type
       });
       this.isConnected = false;
       this.startAutoReconnect(); // Start timer on error
@@ -409,6 +432,9 @@ export class WebSocketService {
     console.log('[WebSocket DEBUG] API URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
     console.log('[WebSocket DEBUG] Token for auth:', token.slice(0, 20) + '...');
     
+    // Reset event handlers flag for new socket
+    this.eventHandlersSetup = false;
+    
     this.socket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000', {
       auth: { token },
       transports: ['websocket', 'polling'],
@@ -429,6 +455,8 @@ export class WebSocketService {
       this.isConnected = false;
     }
     this.stopAutoReconnect();
+    // Reset event handlers flag so they can be set up again on reconnection
+    this.eventHandlersSetup = false;
   }
 
   /**
@@ -490,7 +518,7 @@ export class WebSocketService {
 
   public emitNegotiationResponse(asset: string, improved: boolean, newPrice?: number) {
     if (this.socket && this.isConnected) {
-      let payload: any = { asset, improved };
+      const payload: { asset: string; improved: boolean; newPrice?: number } = { asset, improved };
       if (newPrice !== undefined) payload.newPrice = newPrice;
       console.log('[FRONTEND] Emitting negotiation response:', { eventName: 'negotiation:response', payload });
       this.socket.emit('negotiation:response', payload);
@@ -501,7 +529,7 @@ export class WebSocketService {
 
   public emitQuantityConfirmationResponse(confirmationKey: string, accepted: boolean, newQuantity?: number) {
     if (this.socket && this.isConnected) {
-      let payload: any = { confirmationKey, accepted };
+      const payload: { confirmationKey: string; accepted: boolean; newQuantity?: number } = { confirmationKey, accepted };
       if (newQuantity !== undefined) payload.newQuantity = newQuantity;
       console.log('[FRONTEND] Emitting quantity confirmation response:', { eventName: 'quantity:confirmation_response', payload });
       this.socket.emit('quantity:confirmation_response', payload);

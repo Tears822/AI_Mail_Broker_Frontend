@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api';
 import { useRouter } from 'next/navigation';
@@ -23,7 +25,7 @@ export default function LoginPage() {
     try {
       await apiClient.login(credentials);
       router.push('/dashboard');
-    } catch (err) {
+    } catch {
       setError('Invalid credentials or server error.');
     } finally {
       setLoading(false);

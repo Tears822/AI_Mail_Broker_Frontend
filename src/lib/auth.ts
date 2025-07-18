@@ -5,7 +5,7 @@ export interface JWTPayload {
   iat: number;
   sub: string;
   username: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export function isTokenExpired(token: string): boolean {

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { apiClient, RegisterRequest } from '@/lib/api';
 import { User, Lock, Mail, Phone, TrendingUp, Loader2, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -164,19 +163,20 @@ export default function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
             </div>
 
             <div>
-              <label htmlFor="role" className="sr-only">
-                Role
+              <label htmlFor="role" className="block text-sm font-medium text-gray-200 mb-2">
+                Account Type
               </label>
               <select
                 id="role"
                 name="role"
                 value={formData.role}
                 onChange={handleInputChange}
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200"
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-transparent transition-all duration-200 font-medium"
               >
-                <option value="trader">Trader</option>
-                <option value="admin">Admin</option>
+                <option value="trader" className="text-gray-900 bg-white font-medium">🔵 Trader</option>
+                <option value="admin" className="text-gray-900 bg-white font-medium">👑 Admin</option>
               </select>
+              <p className="text-gray-400 text-xs mt-1">Choose your account type for platform access</p>
             </div>
 
             <AnimatePresence>
