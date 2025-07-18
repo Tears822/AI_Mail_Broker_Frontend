@@ -13,8 +13,7 @@ import {
   ArrowLeft,
   Download,
   DollarSign,
-  BarChart3,
-  Calendar
+  BarChart3
 } from 'lucide-react';
 import { apiClient } from '@/lib/api';
 
