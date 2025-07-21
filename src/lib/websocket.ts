@@ -402,6 +402,15 @@ export class WebSocketService {
       console.log('[FRONTEND] Received quantity:confirmation_request event:', event.data);
       window.dispatchEvent(new CustomEvent('quantityConfirmationRequest', { detail: event.data }));
     });
+
+    this.socket.on('quantity:partial_fill_approval', (event: WebSocketEvent) => {
+      console.log('[FRONTEND] Received quantity:partial_fill_approval event:', event.data);
+      window.dispatchEvent(new CustomEvent('quantityPartialFillApproval', { detail: event.data }));
+    });
+    this.socket.on('quantity:partial_fill_declined', (event: WebSocketEvent) => {
+      console.log('[FRONTEND] Received quantity:partial_fill_declined event:', event.data);
+      window.dispatchEvent(new CustomEvent('quantityPartialFillDeclined', { detail: event.data }));
+    });
   }
 
   public connect(): void {

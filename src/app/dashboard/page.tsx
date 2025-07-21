@@ -61,6 +61,18 @@ export default function DashboardPage() {
   } | null>(null);
   const [quantityConfirmationLoading, setQuantityConfirmationLoading] = useState(false);
 
+  // Add state for partial fill approval and declined notification
+  const [partialFillApproval, setPartialFillApproval] = useState<{
+    asset: string;
+    price: number;
+    yourQuantity: number;
+    partialFillQuantity: number;
+    side: string;
+    confirmationKey: string;
+  } | null>(null);
+  const [partialFillApprovalLoading, setPartialFillApprovalLoading] = useState(false);
+  const [partialFillDeclined, setPartialFillDeclined] = useState<string | null>(null);
+
   // Use React Query for dashboard data
   const {
     data: dashboard,
@@ -213,6 +225,24 @@ export default function DashboardPage() {
     };
     window.addEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest as EventListener);
     return () => window.removeEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest as EventListener);
+  }, []);
+
+  // Listen for partial fill approval events
+  useEffect(() => {
+    const handlePartialFillApproval = (event: CustomEvent) => {
+      setPartialFillApproval(event.detail);
+    };
+    window.addEventListener('quantityPartialFillApproval', handlePartialFillApproval as EventListener);
+    return () => window.removeEventListener('quantityPartialFillApproval', handlePartialFillApproval as EventListener);
+  }, []);
+  // Listen for partial fill declined events
+  useEffect(() => {
+    const handlePartialFillDeclined = (event: CustomEvent) => {
+      setPartialFillDeclined(event.detail?.message || 'Partial fill was declined. No trade was executed.');
+      setTimeout(() => setPartialFillDeclined(null), 10000);
+    };
+    window.addEventListener('quantityPartialFillDeclined', handlePartialFillDeclined as EventListener);
+    return () => window.removeEventListener('quantityPartialFillDeclined', handlePartialFillDeclined as EventListener);
   }, []);
 
   // Update improvedPrice when negotiationTurn changes
@@ -434,6 +464,42 @@ export default function DashboardPage() {
       });
     } finally {
       setQuantityConfirmationLoading(false);
+    }
+  };
+
+  // Handler for partial fill approval response
+  const handlePartialFillApprovalResponse = async (accepted: boolean) => {
+    if (!partialFillApproval) return;
+    setPartialFillApprovalLoading(true);
+    try {
+      websocketServiceRef.current?.emitQuantityConfirmationResponse(
+        partialFillApproval.confirmationKey,
+        accepted
+      );
+      toast.success(accepted ? `You accepted the partial fill for ${partialFillApproval.partialFillQuantity} lots.` : 'You declined the partial fill.', {
+        duration: 10000,
+        style: {
+          background: accepted ? '#10b981' : '#ef4444',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: accepted ? '✅' : '❌',
+      });
+      setPartialFillApproval(null);
+    } catch (err) {
+      toast.error('Failed to send response. Please try again.', {
+        duration: 10000,
+        style: {
+          background: '#ef4444',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '❌',
+      });
+    } finally {
+      setPartialFillApprovalLoading(false);
     }
   };
 
@@ -1316,6 +1382,77 @@ export default function DashboardPage() {
               <p className="text-xs text-gray-500 mt-4 text-center">
                 You have 60 seconds to respond. If no response, trade will proceed with original quantity.
               </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {partialFillApproval && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30"
+          >
+            <div className="bg-white rounded-3xl shadow-2xl p-10 max-w-lg w-full flex flex-col items-center border-2 border-indigo-100">
+              <h2 className="text-2xl font-extrabold mb-4 text-indigo-600 tracking-wide">Partial Fill Approval Needed</h2>
+              <div className="mb-6 text-center space-y-3">
+                <div className="bg-blue-50 p-4 rounded-xl">
+                  <h3 className="text-lg font-bold text-blue-900">Order Details</h3>
+                  <p className="text-blue-800">Asset: <span className="font-bold">{partialFillApproval.asset}</span></p>
+                  <p className="text-blue-800">Price: <span className="font-bold">${partialFillApproval.price}</span></p>
+                  <p className="text-blue-800">Your order: <span className="font-bold">{partialFillApproval.yourQuantity} lots</span></p>
+                  <p className="text-blue-800">Counterparty: <span className="font-bold text-green-600">{partialFillApproval.partialFillQuantity} lots</span></p>
+                </div>
+                <div className="bg-yellow-50 p-4 rounded-xl">
+                  <p className="text-yellow-900 font-semibold">
+                    Do you want to {partialFillApproval.side === 'BUY' ? 'buy' : 'sell'} only <span className="font-bold text-lg">{partialFillApproval.partialFillQuantity} lots</span> at ${partialFillApproval.price}?
+                  </p>
+                  <p className="text-yellow-800 text-sm mt-1">
+                    If you decline, your order will remain active for the full amount.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-4 w-full justify-center">
+                <button
+                  className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-green-500 to-green-600 text-white font-bold text-lg shadow-lg hover:from-green-600 hover:to-green-700 transition disabled:opacity-50"
+                  onClick={() => handlePartialFillApprovalResponse(true)}
+                  disabled={partialFillApprovalLoading}
+                >
+                  {partialFillApprovalLoading ? 'Processing...' : `Yes, ${partialFillApproval.side === 'BUY' ? 'Buy' : 'Sell'} ${partialFillApproval.partialFillQuantity}`}
+                </button>
+                <button
+                  className="flex-1 px-6 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold text-lg shadow hover:bg-gray-300 transition disabled:opacity-50"
+                  onClick={() => handlePartialFillApprovalResponse(false)}
+                  disabled={partialFillApprovalLoading}
+                >
+                  {partialFillApprovalLoading ? 'Processing...' : 'No, Keep My Order'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-4 text-center">
+                You have 60 seconds to respond. If no response, your order will remain active.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {partialFillDeclined && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30"
+          >
+            <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full flex flex-col items-center border-2 border-red-100">
+              <h2 className="text-xl font-bold mb-2 text-red-600">Partial Fill Declined</h2>
+              <p className="text-gray-700 text-center mb-4">{partialFillDeclined}</p>
+              <button
+                className="px-6 py-2 rounded-xl bg-red-500 text-white font-bold text-lg shadow hover:bg-red-600 transition"
+                onClick={() => setPartialFillDeclined(null)}
+              >
+                Close
+              </button>
             </div>
           </motion.div>
         )}
