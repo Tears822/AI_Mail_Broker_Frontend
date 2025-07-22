@@ -435,7 +435,7 @@ export default function DashboardPage() {
           false
         );
         
-        toast.success(`You declined the additional quantity. Trade will proceed with ${quantityConfirmation.yourQuantity} lots.`, {
+        toast.success(`You declined the additional quantity. Waiting for counterparty approval for a partial fill of ${quantityConfirmation.yourQuantity} lots.`, {
           duration: 10000,
           style: {
             background: '#3b82f6',

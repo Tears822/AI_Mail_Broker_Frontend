@@ -228,20 +228,27 @@ export class WebSocketService {
     this.socket.on('trade:executed', (event: WebSocketEvent) => {
       console.log('💱 Trade executed:', event.data);
       
-      // Show toast notification for relevant users
-      if (event.data.side === 'sell') {
-        toast.success(`Trade executed: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`, {
-          duration: 10000,
+      // Use the message from backend if available for perfect consistency with WhatsApp
+      if (event.data.message) {
+        toast.success(event.data.message, {
+          duration: event.data.isFullyFilled ? 12000 : 15000, // Longer for partial fills
           style: {
             background: '#10b981',
             color: '#fff',
             padding: '16px',
             borderRadius: '8px',
+            whiteSpace: 'pre-line', // Preserve line breaks
+            maxWidth: '500px',
           },
-          icon: '💱',
+          icon: event.data.isFullyFilled ? '🎉' : '⏳',
         });
-      } else if (event.data.side === 'buy') {
-        toast.success(`Your order was filled: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`, {
+      } else {
+        // Fallback to old format if message not provided
+        const messageText = event.data.side === 'sell' 
+          ? `Trade executed: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`
+          : `Your order was filled: ${event.data.amount} ${event.data.asset} @ ${event.data.price}`;
+        
+        toast.success(messageText, {
           duration: 10000,
           style: {
             background: '#10b981',
@@ -249,7 +256,7 @@ export class WebSocketService {
             padding: '16px',
             borderRadius: '8px',
           },
-          icon: '🛒',
+          icon: event.data.side === 'sell' ? '💱' : '🛒',
         });
       }
       
@@ -410,6 +417,23 @@ export class WebSocketService {
     this.socket.on('quantity:partial_fill_declined', (event: WebSocketEvent) => {
       console.log('[FRONTEND] Received quantity:partial_fill_declined event:', event.data);
       window.dispatchEvent(new CustomEvent('quantityPartialFillDeclined', { detail: event.data }));
+    });
+
+    // Add handler for counterparty decline notification
+    this.socket.on('quantity:counterparty_declined', (event: WebSocketEvent) => {
+      console.log('[FRONTEND] Received quantity:counterparty_declined event:', event.data);
+      
+      // Show toast notification to inform the larger party about the decline
+      toast.error(`Counterparty declined to increase order\n\n${event.data.message}`, {
+        duration: 8000,
+        style: {
+          background: '#ef4444',
+          color: '#fff',
+          padding: '16px',
+          borderRadius: '8px',
+        },
+        icon: '❌',
+      });
     });
   }
 
