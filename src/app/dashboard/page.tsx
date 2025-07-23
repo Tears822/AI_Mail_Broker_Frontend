@@ -220,12 +220,31 @@ export default function DashboardPage() {
   // Listen for quantity confirmation requests
   useEffect(() => {
     const handleQuantityConfirmationRequest = (event: CustomEvent) => {
-      console.log('[DASHBOARD] Quantity confirmation request received:', event.detail);
+      console.log('[DASHBOARD][DEBUG] ===== QUANTITY CONFIRMATION REQUEST RECEIVED =====');
+      console.log('[DASHBOARD][DEBUG] Event detail:', event.detail);
+      console.log('[DASHBOARD][DEBUG] Current user ID:', dashboard?.profile?.id);
+      console.log('[DASHBOARD][DEBUG] Current username:', dashboard?.profile?.username);
+      console.log('[DASHBOARD][DEBUG] Your order ID:', event.detail.yourOrderId);
+      console.log('[DASHBOARD][DEBUG] Your quantity:', event.detail.yourQuantity);
+      console.log('[DASHBOARD][DEBUG] Additional quantity:', event.detail.additionalQuantity);
+      console.log('[DASHBOARD][DEBUG] Side:', event.detail.side);
+      console.log('[DASHBOARD][DEBUG] Asset:', event.detail.asset);
+      
+      // Add validation check
+      console.log('[DASHBOARD][DEBUG] ===== FRONTEND VALIDATION =====');
+      if (dashboard?.profile?.id) {
+        console.log('[DASHBOARD][DEBUG] ✅ Current user is logged in');
+        console.log('[DASHBOARD][DEBUG] ✅ Modal will be shown to this user');
+      } else {
+        console.log('[DASHBOARD][DEBUG] ❌ No current user found - this should not happen');
+      }
+      console.log('[DASHBOARD][DEBUG] ===============================================');
+      
       setQuantityConfirmation(event.detail);
     };
     window.addEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest as EventListener);
     return () => window.removeEventListener('quantityConfirmationRequest', handleQuantityConfirmationRequest as EventListener);
-  }, []);
+  }, [dashboard?.profile?.id, dashboard?.profile?.username]);
 
   // Listen for partial fill approval events
   useEffect(() => {
